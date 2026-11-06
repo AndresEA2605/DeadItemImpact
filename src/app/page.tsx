@@ -1,14 +1,16 @@
 'use client';
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { ArrowLeft, ChevronRight, Coins, LockKeyhole, Search, Shield, Swords, UserRound } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronRight, Coins, Lightbulb, Search, Shield, Swords, UserRound } from 'lucide-react';
 import { HeroPicker } from '../components/HeroPicker';
 import { LiveMatchPanel } from '../components/LiveMatchPanel';
 import { HeroArt, ItemArt } from '../components/GameImage';
 import { DEADLOCK_HEROES } from '../data/heroes';
 import { DEADLOCK_ITEMS } from '../data/items';
 import { getRoleTheme, ROLE_FILTERS } from '../lib/heroTheme';
-import { HERO_MATCHUPS_BY_SOURCE } from '../lib/matchups';
+import { HERO_MATCHUPS_BY_SOURCE, getTacticalMatchup } from '../lib/matchups';
+import { formatSouls } from '../lib/format';
+import { getAbilityCounterTip } from '../data/ability-counter-tips';
 import type { DeadlockHero } from '../types/deadlock';
 
 const PRIORITY_ORDER = { Esencial: 0, Situacional: 1, 'Late Game': 2 };
@@ -101,6 +103,11 @@ export default function Home() {
     });
     return Array.from(unique.values()).slice(0, 4);
   }, [hero, heroMatchups]);
+
+  const tacticalMatchup = useMemo(() => {
+    if (!playerHero || !hero || playerHero.id === hero.id) return null;
+    return getTacticalMatchup(playerHero, hero);
+  }, [playerHero, hero]);
 
   const selectHero = (selected: DeadlockHero) => {
     setHero(selected);
@@ -260,7 +267,7 @@ export default function Home() {
                         <span className="mt-1 text-[9px] text-white/40">{TIMING_LABEL[timing]}</span>
                         <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-white/80">
                           <Coins className="h-3 w-3 text-white/45" />
-                          {item.cost.toLocaleString('es-ES')} almas
+                          {formatSouls(item.cost)} almas
                         </span>
                       </div>
                     );
@@ -281,7 +288,7 @@ export default function Home() {
                         </span>
                         <div className="min-w-0">
                           <p className="text-[12px] font-semibold text-white/90">{ability.name}</p>
-                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-white/65">{ability.counterTip}</p>
+                          <p className="mt-1 text-[11.5px] leading-relaxed text-white/75">{getAbilityCounterTip(hero.id, ability.slot, ability.name, ability.counterTip)}</p>
                         </div>
                       </div>
                     ))}
@@ -309,35 +316,137 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
+                <div className="mt-5 overflow-hidden rounded-2xl border border-white/[0.09] bg-[#121418]">
+                  {/* Selector y Cabecera de Duelo */}
+                  <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-white/[0.02] p-4">
+                    <div className="flex min-w-0 items-center gap-3">
                       {playerHero ? (
-                        <HeroArt hero={playerHero} className="h-9 w-9 shrink-0 rounded-xl" sizes="36px" />
+                        <div className="relative">
+                          <HeroArt hero={playerHero} className="h-11 w-11 rounded-xl ring-2 ring-white/10" sizes="44px" />
+                          <span className="absolute -bottom-1 -right-1 rounded-full bg-white px-1.5 py-0.2 text-[8px] font-black text-black">TÚ</span>
+                        </div>
                       ) : (
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-white/45">
-                          <UserRound className="h-4 w-4" />
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-white/40 ring-1 ring-white/10">
+                          <UserRound className="h-5 w-5" />
                         </span>
                       )}
                       <div className="min-w-0">
-                        <p className="text-[10px] font-medium uppercase text-white/40">Mi héroe</p>
-                        <p className="truncate text-[12px] font-semibold text-white/85">{playerHero?.name ?? 'Sin seleccionar'}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-white/40">Tu Héroe en este duelo</p>
+                        <p className="truncate text-[13px] font-bold text-white">{playerHero?.name ?? 'Elige a tu héroe para comparar'}</p>
                       </div>
                     </div>
                     <button
                       onClick={() => setPlayerPickerOpen(true)}
-                      className="press shrink-0 rounded-full bg-white/[0.09] px-3 py-2 text-[11px] font-semibold text-white/80 hover:bg-white/[0.14]"
+                      className="press shrink-0 rounded-xl bg-white/[0.09] px-3.5 py-2 text-[11px] font-bold text-white hover:bg-white/[0.15] active:scale-95"
                     >
                       {playerHero ? 'Cambiar' : 'Elegir'}
                     </button>
                   </div>
-                  {playerHero && <p className="mt-2.5 border-t border-white/[0.07] pt-2.5 text-[11px] leading-relaxed text-white/60">{matchupLabel()}</p>}
-                </div>
 
-                <button disabled title="Disponible en una actualización futura" className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/[0.07] py-3 text-[12px] font-medium text-white/35 disabled:cursor-not-allowed">
-                  <LockKeyhole className="h-3.5 w-3.5" />
-                  Información avanzada
-                </button>
+                  {playerHero && playerHero.id === hero.id && (
+                    <div className="p-4 text-center">
+                      <p className="text-[11px] text-amber-300/80">
+                        Estás viendo al mismo personaje. Selecciona a otro héroe rival para calcular la ventaja y counters.
+                      </p>
+                    </div>
+                  )}
+
+                  {tacticalMatchup && (
+                    <div className="p-4 space-y-4">
+                      {/* Medidor visual de Ventaja (Matchup Meter) */}
+                      <div className="rounded-xl border border-white/[0.07] bg-black/40 p-3.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold">
+                          <span className="flex items-center gap-1.5 text-white/90">
+                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                            {tacticalMatchup.sourceHero.name}
+                          </span>
+                          <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider border ${tacticalMatchup.statusBadge.tone}`}>
+                            {tacticalMatchup.statusBadge.label}
+                          </span>
+                          <span className="flex items-center gap-1.5 text-white/60">
+                            {hero.name}
+                            <span className="h-2 w-2 rounded-full bg-rose-400" />
+                          </span>
+                        </div>
+
+                        {/* Barra de progreso de ventaja */}
+                        <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-white/[0.08] flex">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              tacticalMatchup.userPerspective === 'favorable'
+                                ? 'w-[70%] bg-emerald-400'
+                                : tacticalMatchup.userPerspective === 'unfavorable'
+                                ? 'w-[30%] bg-rose-500'
+                                : 'w-[50%] bg-amber-400'
+                            }`}
+                          />
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              tacticalMatchup.userPerspective === 'favorable'
+                                ? 'w-[30%] bg-emerald-950/60'
+                                : tacticalMatchup.userPerspective === 'unfavorable'
+                                ? 'w-[70%] bg-rose-950/60'
+                                : 'w-[50%] bg-amber-950/60'
+                            }`}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 2 Píldoras Rápidas Visuales de Combate */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3">
+                          <div className="flex items-center gap-1.5 text-amber-300 text-[10px] font-bold uppercase tracking-wider">
+                            <Swords className="h-3.5 w-3.5" />
+                            Mecánica del choque
+                          </div>
+                          <p className="mt-1 text-[11px] leading-relaxed text-white/80">
+                            {tacticalMatchup.whyReason}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/15 p-3">
+                          <div className="flex items-center gap-1.5 text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
+                            <Lightbulb className="h-3.5 w-3.5" />
+                            La Jugada táctica
+                          </div>
+                          <p className="mt-1 text-[11px] leading-relaxed text-emerald-100/90">
+                            {tacticalMatchup.solutionHowToPlay}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Chips rápidos de compras sugeridas */}
+                      {tacticalMatchup.recommendedItems.length > 0 && (
+                        <div className="border-t border-white/[0.07] pt-2.5">
+                          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-white/45">
+                              Compras clave:
+                            </span>
+                            {tacticalMatchup.recommendedItems.map(({ item, explanation }) => (
+                              <span
+                                key={item.id}
+                                title={explanation}
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] text-white/80 transition hover:bg-white/[0.06]"
+                              >
+                                <ItemArt item={item} className="h-4 w-4 rounded" sizes="16px" />
+                                <span className="font-semibold text-white/90">{item.name}</span>
+                                <span className="font-mono text-[9px] font-bold text-amber-300">{formatSouls(item.cost)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!playerHero && (
+                    <div className="p-4 text-center">
+                      <p className="text-[11px] text-white/55">
+                        💡 Selecciona a tu héroe para ver quién domina el choque y la jugada recomendada.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </article>
           </section>

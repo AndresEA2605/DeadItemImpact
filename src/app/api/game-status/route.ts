@@ -5,6 +5,36 @@ import fs from 'fs';
 import path from 'path';
 
 const execFileAsync = promisify(execFile);
+const ALLOWED_WEB_ORIGINS = new Set([
+  'https://deadlock-hub-six.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
+function getCorsHeaders(origin: string | null): Headers {
+  const headers = new Headers({
+    'Cache-Control': 'no-store',
+    Vary: 'Origin',
+  });
+
+  if (origin && ALLOWED_WEB_ORIGINS.has(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type');
+    headers.set('Access-Control-Max-Age', '600');
+  }
+
+  return headers;
+}
+
+export function OPTIONS(request: Request) {
+  const origin = request.headers.get('origin');
+  if (!origin || !ALLOWED_WEB_ORIGINS.has(origin)) {
+    return new Response(null, { status: 403, headers: getCorsHeaders(origin) });
+  }
+
+  return new Response(null, { status: 204, headers: getCorsHeaders(origin) });
+}
 
 // Evitamos que Turbopack intente analizar estáticamente la ruta en tiempo de compilación
 function getCitadelLogPath(): string {
@@ -135,7 +165,7 @@ function extractMapName(lines: string[]): string | null {
 }
 
 function detectGameMode(lines: string[], mapName: string | null, logFresh: boolean): GameMode {
-  if (!logFresh) return mapName && /hideout|practice|training|sandbox/i.test(mapName) ? 'practice' : 'unknown';
+  if (!logFresh) return 'unknown';
 
   const recentText = lines.slice(-250).join('\n');
   if (/hideout|practice|training|sandbox/i.test(mapName ?? '') || /\b(?:practice mode|training room|sandbox)\b/i.test(recentText)) {
@@ -148,7 +178,14 @@ function detectGameMode(lines: string[], mapName: string | null, logFresh: boole
   return 'unknown';
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const origin = request.headers.get('origin');
+  const headers = getCorsHeaders(origin);
+
+  if (origin && !ALLOWED_WEB_ORIGINS.has(origin)) {
+    return NextResponse.json({ error: 'Origen no permitido.' }, { status: 403, headers });
+  }
+
   try {
     let isRunning = false;
     let processId: number | null = null;
@@ -202,7 +239,7 @@ export async function GET() {
         }
 
         const lines = buffer.toString('utf-8').split('\n');
-        mapName = extractMapName(lines);
+        mapName = logFresh ? extractMapName(lines) : null;
         gameMode = detectGameMode(lines, mapName, logFresh);
         inMatch = gameMode === 'match';
 
@@ -229,11 +266,11 @@ export async function GET() {
       logFresh,
       detectedHeroes: Array.from(detectedHeroIds).slice(0, 12),
       timestamp: new Date().toISOString()
-    });
+    }, { headers });
   } catch (error) {
     return NextResponse.json(
       { isRunning: false, inMatch: false, gameMode: 'unknown', mapName: null, logFresh: false, detectedHeroes: [], error: String(error) },
-      { status: 500 }
+      { status: 500, headers }
     );
   }
 }

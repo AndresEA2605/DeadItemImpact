@@ -40,21 +40,33 @@ export const HeroPicker: React.FC<HeroPickerProps> = ({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  // Bloqueo de scroll + Escape + foco inicial.
-  // El reset de filtros se resuelve remontando el componente con `key` al abrir.
+  // Bloqueo estricto del scroll de fondo en móviles (evita que la pantalla se baje)
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
+
+    const scrollY = window.scrollY;
+    const prevPosition = document.body.style.position;
+    const prevTop = document.body.style.top;
+    const prevWidth = document.body.style.width;
+    const prevOverflow = document.body.style.overflow;
+
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
     document.body.style.overflow = 'hidden';
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
-    const timer = window.setTimeout(() => searchRef.current?.focus(), 120);
+
     return () => {
-      document.body.style.overflow = previous;
+      document.body.style.position = prevPosition;
+      document.body.style.top = prevTop;
+      document.body.style.width = prevWidth;
+      document.body.style.overflow = prevOverflow;
+      window.scrollTo(0, scrollY);
       window.removeEventListener('keydown', onKey);
-      window.clearTimeout(timer);
     };
   }, [open]);
 
@@ -82,7 +94,7 @@ export const HeroPicker: React.FC<HeroPickerProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 sheet-backdrop sm:items-center sm:px-4"
+      className="fixed inset-0 z-[100] flex flex-col bg-[#0b0c10] sm:bg-black/80 sm:backdrop-blur-md sm:items-center sm:justify-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -91,92 +103,83 @@ export const HeroPicker: React.FC<HeroPickerProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="slide-in relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#0f1014] shadow-2xl sm:max-h-[82dvh] sm:max-w-2xl sm:rounded-3xl"
+        className="relative flex h-full w-full flex-col overflow-hidden bg-[#0e0f13] sm:h-auto sm:max-h-[86vh] sm:max-w-2xl sm:rounded-3xl sm:border sm:border-white/10 sm:shadow-2xl"
       >
-        {/* Handle (mobile) */}
-        <div className="flex justify-center pb-1 pt-3 sm:hidden">
-          <div className="h-1 w-10 rounded-full bg-neutral-700" />
-        </div>
-
-        {/* Header */}
-        <div className="flex items-start gap-3 px-4 pb-3 pt-2 sm:px-5 sm:pt-5">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-black leading-tight text-white">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-[11px] text-neutral-400">{subtitle}</p>}
+        {/* Header fijo superior */}
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-3.5 sm:px-6">
+          <div className="min-w-0 pr-2">
+            <h2 className="text-base font-bold text-white sm:text-lg">{title}</h2>
+            {subtitle && <p className="truncate text-[11px] text-white/50">{subtitle}</p>}
           </div>
           <button
             onClick={onClose}
             aria-label="Cerrar selector"
-            className="tap -mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-neutral-800/80 text-neutral-300 transition active:scale-90"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-white/80 transition hover:bg-white/[0.14] active:scale-95"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Buscador */}
-        <div className="px-4 sm:px-5">
+        {/* Barra de búsqueda (sin auto-focus para que el teclado móvil no tape los héroes) */}
+        <div className="shrink-0 border-b border-white/[0.06] p-3 sm:px-6">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
             <input
               ref={searchRef}
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar héroe por nombre, rol o estilo…"
+              placeholder="Buscar héroe..."
               autoComplete="off"
-              className="w-full rounded-2xl border border-white/8 bg-neutral-900 py-3 pl-10 pr-9 text-sm text-white placeholder-neutral-500 outline-none transition focus:border-white/30 focus:ring-2 focus:ring-white/10"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] py-2.5 pl-10 pr-9 text-sm text-white placeholder-white/35 outline-none transition focus:border-white/20 focus:bg-white/[0.07]"
             />
             {query && (
               <button
                 onClick={() => setQuery('')}
                 aria-label="Limpiar búsqueda"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-neutral-500 transition hover:text-white"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-white/40 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             )}
           </div>
+
+          {/* Filtros horizontales por rol con scroll suave en móvil */}
+          <div className="scrollbar-none mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
+            {ROLE_FILTERS.map((r) => {
+              const active = role === r;
+              return (
+                <button
+                  key={r}
+                  onClick={() => setRole(r)}
+                  aria-pressed={active}
+                  className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium transition active:scale-95 ${
+                    active
+                      ? 'bg-white text-black font-semibold'
+                      : 'bg-white/[0.05] text-white/60 hover:bg-white/[0.09] hover:text-white'
+                  }`}
+                >
+                  {r === 'Todos' ? 'Todos' : r}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Filtros por rol */}
-        <div className="mt-3 flex flex-wrap gap-1.5 px-4 pb-1 sm:px-5">
-          {ROLE_FILTERS.map((r) => {
-            const active = role === r;
-            return (
-              <button
-                key={r}
-                onClick={() => setRole(r)}
-                aria-pressed={active}
-                aria-label={`Filtrar por ${r}`}
-                title={r}
-                className={`tap rounded-full border px-2.5 py-1 text-[10px] font-bold transition active:scale-95 ${
-                  active
-                    ? 'border-white/40 bg-white text-black'
-                    : 'border-white/8 bg-neutral-900/70 text-neutral-400 hover:text-neutral-200'
-                }`}
-              >
-                {r === 'Todos' ? 'Todos' : `${getRoleTheme(r).emoji} ${r === 'Soporte / Utilidad' ? 'Soporte' : r === 'Mago de Control' ? 'Control' : r}`}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Resultados */}
-        <div className="mt-2 flex items-center justify-between px-4 pb-1 sm:px-5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-            {filtered.length} héroe{filtered.length === 1 ? '' : 's'}
-          </span>
+        {/* Contador de héroes */}
+        <div className="flex shrink-0 items-center justify-between px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-white/45 sm:px-6">
+          <span>{filtered.length} héroe{filtered.length === 1 ? '' : 's'}</span>
           {multi && (
-            <span className="text-[10px] font-semibold text-neutral-500">
+            <span className="text-amber-300 font-bold">
               {selectedIds?.length ?? 0}/{max} seleccionados
             </span>
           )}
         </div>
 
-        <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-1 sm:px-4">
+        {/* Grilla scrollable de héroes con botones táctiles grandes */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-6 pt-1 sm:px-6">
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
             {filtered.map((h) => {
-              const theme = getRoleTheme(h.role);
               const active = selectedSet.has(h.id);
               const disabled = multi && atMax && !active;
               return (
@@ -186,24 +189,24 @@ export const HeroPicker: React.FC<HeroPickerProps> = ({
                   disabled={disabled}
                   aria-pressed={active}
                   aria-label={`${h.name}, ${h.role}`}
-                  className={`tap group relative flex min-h-[88px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2 transition-all active:scale-[0.97] ${
+                  className={`relative flex min-h-[96px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2 transition active:scale-95 ${
                     active
-                      ? 'border-white/45 bg-white/[0.08] shadow-[0_0_18px_rgba(255,255,255,0.07)]'
+                      ? 'border-emerald-400/60 bg-emerald-500/15 shadow-[0_0_15px_rgba(52,211,153,0.15)] ring-2 ring-emerald-400/30'
                       : disabled
-                        ? 'border-white/5 bg-neutral-900/40 opacity-40'
-                        : 'border-white/7 bg-neutral-900/70 hover:border-white/20 hover:bg-neutral-900'
+                        ? 'border-white/5 bg-white/[0.02] opacity-35 cursor-not-allowed'
+                        : 'border-white/[0.08] bg-white/[0.035] hover:border-white/20 hover:bg-white/[0.06]'
                   }`}
                 >
-                  <HeroArt hero={h} className="h-11 w-11 rounded-xl" sizes="44px" decorative />
-                  <span className="line-clamp-1 w-full text-center text-[10px] font-bold leading-tight text-neutral-200">
+                  <HeroArt hero={h} className="h-12 w-12 rounded-xl" sizes="48px" decorative />
+                  <span className="line-clamp-1 w-full text-center text-[11px] font-bold leading-tight text-white/90">
                     {h.name}
                   </span>
-                  <span className="text-[10px] opacity-80" aria-hidden="true">
-                    {theme.emoji}
+                  <span className="text-[9px] text-white/45 truncate max-w-full">
+                    {h.role}
                   </span>
                   {active && (
-                    <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-white text-black">
-                      <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                    <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400 text-black">
+                      <Check className="h-2.5 w-2.5 stroke-[3]" />
                     </span>
                   )}
                 </button>
@@ -212,22 +215,22 @@ export const HeroPicker: React.FC<HeroPickerProps> = ({
           </div>
 
           {filtered.length === 0 && (
-            <div className="flex flex-col items-center gap-2 py-12 text-center">
-              <Search className="h-7 w-7 text-neutral-700" />
-              <p className="text-sm font-semibold text-neutral-400">Sin resultados</p>
-              <p className="text-xs text-neutral-600">Prueba con otro nombre o cambia el filtro de rol.</p>
+            <div className="flex flex-col items-center gap-2 py-16 text-center">
+              <Search className="h-8 w-8 text-white/20" />
+              <p className="text-sm font-semibold text-white/60">No se encontraron héroes</p>
+              <p className="text-xs text-white/40">Prueba con otro nombre o selecciona &quot;Todos&quot;.</p>
             </div>
           )}
         </div>
 
-        {/* Footer multi */}
+        {/* Footer fijo para multi-selección */}
         {multi && (
-          <div className="border-t border-white/8 bg-[#0f1014] px-4 py-3 pb-safe sm:px-5">
+          <div className="shrink-0 border-t border-white/[0.08] bg-[#0e0f13] p-3 pb-safe sm:p-4">
             <button
               onClick={onClose}
-              className="tap w-full rounded-2xl bg-white py-3 text-sm font-semibold text-black transition active:scale-[0.98]"
+              className="w-full rounded-xl bg-amber-400 py-3 text-center text-xs font-bold uppercase tracking-wider text-black shadow-lg transition active:scale-[0.98] hover:bg-amber-300"
             >
-              Listo · {selectedIds?.length ?? 0} enemigo{(selectedIds?.length ?? 0) === 1 ? '' : 's'}
+              Confirmar selección ({selectedIds?.length ?? 0}/{max})
             </button>
           </div>
         )}

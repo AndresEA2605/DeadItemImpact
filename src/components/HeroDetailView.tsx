@@ -5,6 +5,7 @@ import { DeadlockHero } from '../types/deadlock';
 import { DEADLOCK_ITEMS } from '../data/items';
 import { DEADLOCK_HEROES } from '../data/heroes';
 import { HERO_MATCHUPS_BY_SOURCE } from '../lib/matchups';
+import { getAbilityCounterTip } from '../data/ability-counter-tips';
 import { ItemCard } from './ItemCard';
 import {
   ShieldAlert,
@@ -447,7 +448,9 @@ export const HeroDetailView: React.FC<HeroDetailViewProps> = ({
                           <AlertTriangle className="w-3.5 h-3.5" />
                           Cómo contrarrestar esta habilidad:
                         </div>
-                        <p className="text-neutral-300 leading-normal">{ab.counterTip}</p>
+                        <p className="text-neutral-300 leading-normal">
+                          {getAbilityCounterTip(hero.id, ab.slot, ab.name, ab.counterTip)}
+                        </p>
                       </div>
                     </div>
                   ))}

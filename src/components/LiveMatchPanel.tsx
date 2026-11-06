@@ -1,9 +1,10 @@
-﻿'use client';
+'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { MouseEvent } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronDown,
   Clock3,
@@ -26,6 +27,36 @@ import type { DeadlockHero, DeadlockItem, ItemCategory, ItemCounterRecommendatio
 
 const POLL_INTERVAL = 20_000;
 const REQUEST_TIMEOUT = 5_000;
+const LOCAL_GAME_STATUS_URL = 'http://127.0.0.1:3000/api/game-status';
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+function subscribeToPageOrigin(): () => void {
+  return () => {};
+}
+
+function getHostedPageSnapshot(): boolean {
+  return typeof window !== 'undefined' && !isLoopbackHost(window.location.hostname);
+}
+
+function getServerPageSnapshot(): boolean {
+  return false;
+}
+
+function requestGameStatus(signal: AbortSignal, useLocalBridge: boolean): Promise<Response> {
+  if (!useLocalBridge) {
+    return fetch('/api/game-status', { cache: 'no-store', signal });
+  }
+
+  return fetch(LOCAL_GAME_STATUS_URL, {
+    cache: 'no-store',
+    mode: 'cors',
+    signal,
+    targetAddressSpace: 'loopback',
+  } as RequestInit & { targetAddressSpace: 'loopback' });
+}
 
 const MAP_LABELS: Record<string, string> = {
   dl_hideout: 'Zona de práctica',
@@ -125,6 +156,13 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
   const [refreshing, setRefreshing] = useState(false);
   const [statusError, setStatusError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const hostedApp = useSyncExternalStore(
+    subscribeToPageOrigin,
+    getHostedPageSnapshot,
+    getServerPageSnapshot,
+  );
+  const [localBridgeConnected, setLocalBridgeConnected] = useState(false);
+  const [connectingLocalBridge, setConnectingLocalBridge] = useState(false);
   const hasCompletedRead = useRef(false);
   const previousMode = useRef<GameStatus['gameMode'] | undefined>(undefined);
   const enemySelectionTouched = useRef(false);
@@ -160,6 +198,8 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
     let inFlight = false;
     let pendingController: AbortController | null = null;
 
+    if (hostedApp && !localBridgeConnected) return;
+
     const poll = async () => {
       if (inFlight) return;
       inFlight = true;
@@ -169,10 +209,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
       else setLoading(true);
 
       try {
-        const response = await fetch('/api/game-status', {
-          cache: 'no-store',
-          signal: pendingController.signal,
-        });
+        const response = await requestGameStatus(pendingController.signal, hostedApp);
         if (!response.ok) throw new Error(`Estado del juego: ${response.status}`);
         const nextStatus: GameStatus = await response.json();
         if (mounted) {
@@ -202,7 +239,9 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
           setStatusError(
             error instanceof Error && error.name === 'AbortError'
               ? 'La lectura tardó más de 5 segundos.'
-              : 'No se pudo leer el estado del juego.'
+              : hostedApp
+                ? 'Se perdió la conexión con este PC. Revisa que Deadlock Hub local siga abierto.'
+                : 'No se pudo leer el estado del juego.'
           );
         }
       } finally {
@@ -224,7 +263,31 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
       window.clearInterval(interval);
       pendingController?.abort();
     };
-  }, [refreshToken]);
+  }, [hostedApp, localBridgeConnected, refreshToken]);
+
+  const connectLocalBridge = async () => {
+    setConnectingLocalBridge(true);
+    setStatusError('');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+    try {
+      const response = await requestGameStatus(controller.signal, true);
+      if (!response.ok) throw new Error(`Estado local: ${response.status}`);
+      const nextStatus: GameStatus = await response.json();
+      setStatus(nextStatus);
+      setLocalBridgeConnected(true);
+      setStatusError('');
+    } catch {
+      setStatusError(
+        'No pude conectar con tu PC. Inicia Deadlock Hub local con “bun run dev” y permite el acceso a la red local cuando el navegador lo solicite.'
+      );
+    } finally {
+      window.clearTimeout(timeout);
+      setConnectingLocalBridge(false);
+      setLoading(false);
+    }
+  };
 
   const detectedHeroes = useMemo(
     () => (status?.detectedHeroes ?? [])
@@ -257,52 +320,105 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
   );
   const ownMatchupEntries = useMemo(() => {
     if (!playerHeroId) return [];
-    const matchupOpponents = laneEnemyHeroes.length > 0 ? laneEnemyHeroes : enemyHeroes;
-    return matchupOpponents.flatMap((enemy) => {
-      const entry = HERO_MATCHUPS_BY_SOURCE.get(enemy.id)?.get(playerHeroId);
+    // Prioritizar rivales de línea y luego los de la partida
+    const allEnemies = [
+      ...laneEnemyHeroes,
+      ...enemyHeroes.filter((e) => !laneEnemyIds.includes(e.id)),
+    ];
+    return allEnemies.flatMap((enemy) => {
+      // Tomar la perspectiva del jugador contra este rival
+      const entry = HERO_MATCHUPS_BY_SOURCE.get(playerHeroId)?.get(enemy.id);
       return entry ? [{ enemy, entry }] : [];
     });
-  }, [enemyHeroes, laneEnemyHeroes, playerHeroId]);
+  }, [enemyHeroes, laneEnemyHeroes, playerHeroId, laneEnemyIds]);
+
+  const counterThreats = useMemo(() => {
+    if (!myHero || !playerHeroId) return [];
+    // Todos los enemigos conocidos
+    const allEnemies = [
+      ...laneEnemyHeroes,
+      ...enemyHeroes.filter((e) => !laneEnemyIds.includes(e.id)),
+    ];
+
+    return allEnemies.flatMap((enemy) => {
+      const isLaneEnemy = laneEnemyIds.includes(enemy.id);
+      // Perspectiva del jugador: ¿este rival me hace counter a mí?
+      const myAgainstEnemy = HERO_MATCHUPS_BY_SOURCE.get(playerHeroId)?.get(enemy.id);
+      const enemyAgainstMy = HERO_MATCHUPS_BY_SOURCE.get(enemy.id)?.get(playerHeroId);
+
+      const isThreat =
+        myAgainstEnemy?.advantage === 'Débil Contra' ||
+        enemyAgainstMy?.advantage === 'Fuerte Contra';
+
+      if (!isThreat) return [];
+
+      const itemIds = myAgainstEnemy?.recommendedItemIds ?? enemyAgainstMy?.recommendedItemIds ?? [];
+      const items = itemIds
+        .map((id) => DEADLOCK_ITEMS[id])
+        .filter((item): item is DeadlockItem => Boolean(item));
+
+      const whyReason =
+        myAgainstEnemy?.reason ??
+        `${enemy.name} tiene ventaja con sus habilidades de control y burst.`;
+      const solution =
+        myAgainstEnemy?.solution ??
+        `Compra ${items[0]?.name || 'ítems defensivos'} y no aceptes duelos directos.`;
+
+      return [{
+        enemy,
+        isLaneEnemy,
+        whyReason,
+        solution,
+        keyItems: items.slice(0, 3),
+      }];
+    });
+  }, [myHero, playerHeroId, enemyHeroes, laneEnemyHeroes, laneEnemyIds]);
+
   const matchupAdvice = useMemo(() => {
-    if (!myHero) return null;
-    const hasConflicts = ownMatchupEntries.some(({ entry }) => entry.conflicted);
-    const hasDanger = ownMatchupEntries.some(({ entry }) => !entry.conflicted && entry.advantage === 'Fuerte Contra');
-    const hasAdvantage = ownMatchupEntries.some(({ entry }) => !entry.conflicted && entry.advantage === 'Débil Contra');
+    if (!myHero || !playerHeroId) return null;
+    const laneMatchups = laneEnemyHeroes
+      .map((enemy) => HERO_MATCHUPS_BY_SOURCE.get(playerHeroId)?.get(enemy.id))
+      .filter(Boolean);
+
+    const hasDanger = laneMatchups.some((m) => m?.advantage === 'Débil Contra');
+    const hasAdvantage = laneMatchups.some((m) => m?.advantage === 'Fuerte Contra');
     const phaseAdvice = laneEnemyHeroes.length > 0
       ? myHero.howToPlay.lanePhaseTips[0]
       : status?.gameMode === 'match'
       ? myHero.howToPlay.midLateGamePlan[0]
       : myHero.howToPlay.lanePhaseTips[0];
 
-    if (hasConflicts) {
+    if (laneMatchups.some((m) => m?.conflicted)) {
       return {
         label: laneEnemyHeroes.length > 0 ? 'Cruce de línea incierto' : 'Cruce incierto',
         tone: 'border-amber-300/20 bg-amber-300/[0.05] text-amber-100/80',
         action: phaseAdvice,
       };
     }
+
     if (hasDanger) {
       return {
-        label: laneEnemyHeroes.length > 0 ? 'El rival de línea tiene ventaja' : 'Hay rivales que te hacen counter',
-        tone: 'border-rose-300/20 bg-rose-300/[0.05] text-rose-100/80',
-        action: myHero.counterplay.positioningTips[0] || phaseAdvice,
+        label: laneEnemyHeroes.length > 0 ? 'El rival de línea tiene ventaja' : 'El rival tiene ventaja directa',
+        tone: 'border-rose-400/25 bg-rose-400/[0.06] text-rose-100/80',
+        action: 'Pelea cerca de una pared o cobertura para cortar la línea de visión enemiga.',
       };
     }
+
     if (hasAdvantage) {
       return {
-        label: laneEnemyHeroes.length > 0 ? 'Tienes ventaja en línea' : 'Tienes un matchup favorable',
-        tone: 'border-emerald-300/20 bg-emerald-300/[0.05] text-emerald-100/80',
-        action: phaseAdvice,
+        label: laneEnemyHeroes.length > 0 ? 'Tienes ventaja en fase de líneas' : 'Tienes ventaja táctica',
+        tone: 'border-emerald-300/25 bg-emerald-300/[0.06] text-emerald-100/80',
+        action: 'Presiona la línea con tu kit y busca el last hit agresivo con melee.',
       };
     }
+
     return {
-      label: laneEnemyHeroes.length > 0
-        ? 'Sin datos suficientes del cruce de línea'
-        : enemyHeroes.length === 0 ? 'Añade rivales para leer el matchup' : 'Sin datos suficientes del cruce',
-      tone: 'border-white/[0.08] bg-white/[0.025] text-white/65',
+      label: laneEnemyHeroes.length > 0 ? 'Línea igualada por habilidad' : 'Duelo parejo (50/50)',
+      tone: 'border-white/10 bg-white/[0.03] text-white/70',
       action: phaseAdvice,
     };
-  }, [enemyHeroes.length, laneEnemyHeroes.length, myHero, ownMatchupEntries, status?.gameMode]);
+  }, [laneEnemyHeroes, myHero, playerHeroId, status?.gameMode]);
+
   const openingBuild = useMemo(() => {
     const stage = myHero?.howToPlay.buildGuide[0];
     if (!stage) return null;
@@ -386,7 +502,9 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
       ? 'En sala'
       : status?.gameMode === 'match'
         ? 'Partida en curso'
-        : status?.isRunning
+        : hostedApp && !localBridgeConnected
+          ? 'Conexión local pendiente'
+          : status?.isRunning
           ? 'Deadlock abierto · modo sin confirmar'
           : 'Deadlock no detectado';
   const mapLabel = status?.mapName ? getMapLabel(status.mapName) : null;
@@ -471,18 +589,35 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
           <p className="mb-1 text-[12px] font-medium uppercase text-white/40">Lectura local · actualiza cada 20 s</p>
           <h1 className="text-2xl font-semibold text-white">Zona de partida</h1>
         </div>
-        <button
-          onClick={() => setRefreshToken((token) => token + 1)}
-          disabled={refreshing || loading}
-          aria-label="Actualizar detección"
-          title="Actualizar ahora"
-          className="press flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.07] text-white/70 hover:bg-white/[0.12] disabled:opacity-40"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing || loading ? 'animate-spin' : ''}`} />
-        </button>
+        {hostedApp && !localBridgeConnected ? (
+          <button
+            onClick={() => void connectLocalBridge()}
+            disabled={connectingLocalBridge}
+            className="press inline-flex min-h-10 items-center gap-2 rounded-full bg-amber-300 px-4 text-[12px] font-semibold text-neutral-950 hover:bg-amber-200 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${connectingLocalBridge ? 'animate-spin' : ''}`} />
+            {connectingLocalBridge ? 'Conectando…' : 'Conectar este PC'}
+          </button>
+        ) : (
+          <button
+            onClick={() => setRefreshToken((token) => token + 1)}
+            disabled={refreshing || loading}
+            aria-label="Actualizar detección"
+            title="Actualizar ahora"
+            className="press flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.07] text-white/70 hover:bg-white/[0.12] disabled:opacity-40"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing || loading ? 'animate-spin' : ''}`} />
+          </button>
+        )}
       </div>
 
-      {loading && !status ? (
+      {hostedApp && !localBridgeConnected && (
+        <div className="mb-4 rounded-2xl border border-amber-200/15 bg-amber-200/[0.045] p-3.5 text-[12px] leading-relaxed text-white/65">
+          La web necesita permiso para consultar Deadlock en tu PC. Deja abierto el servidor local del proyecto y pulsa <span className="font-semibold text-white/85">Conectar este PC</span>.
+        </div>
+      )}
+
+      {loading && !status && !(hostedApp && !localBridgeConnected) ? (
         <div className="animate-pulse space-y-3" aria-label="Cargando estado del juego">
           <div className="h-20 rounded-2xl bg-white/[0.06]" />
           <div className="h-36 rounded-2xl bg-white/[0.04]" />
@@ -493,7 +628,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
           {statusError && (
             <p role="status" className="mt-3 flex items-center gap-2 text-[12px] text-amber-100/85">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              {statusError} Mantengo la última lectura.
+              {statusError}
             </p>
           )}
 
@@ -519,7 +654,11 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
                       {mapLabel}
                     </span>
                   )}
-                  {status?.isRunning && !status.logFresh && <span className="text-amber-200/70">Lectura antigua</span>}
+                  {status?.isRunning && !status.logFresh && (
+                    <span className="text-amber-200/80" title="Agrega -condebug en las opciones de lanzamiento de Deadlock y reinicia el juego.">
+                      Sin registro en vivo · activa -condebug en Steam
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -635,9 +774,77 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
                   )}
 
                   {matchupAdvice && (
-                    <div className="mt-3 border-l-2 border-amber-300/60 pl-3">
-                      <p className="text-[11px] font-semibold text-white/80">{matchupAdvice.label}</p>
-                      <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-white/65">{matchupAdvice.action}</p>
+                    <div className={`mt-3 rounded-xl border p-3 ${matchupAdvice.tone}`}>
+                      <p className="text-[12px] font-bold text-white/90">{matchupAdvice.label}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-white/70">{matchupAdvice.action}</p>
+                    </div>
+                  )}
+
+                  {/* Detalle exhaustivo de rivales que te hacen counter */}
+                  {counterThreats.length > 0 && (
+                    <div className="mt-3.5 space-y-2.5">
+                      <div className="flex items-center gap-1.5 text-rose-300">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider">
+                          {counterThreats.length === 1 ? '1 rival te hace counter directo' : (counterThreats.length + ' rivales te hacen counter')}
+                        </span>
+                      </div>
+
+                      {counterThreats.map(({ enemy, isLaneEnemy, whyReason, solution, keyItems }) => (
+                        <div key={enemy.id} className="rounded-xl border border-rose-500/30 bg-rose-950/25 p-3.5 shadow-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <HeroArt hero={enemy} className="h-8 w-8 rounded-lg shadow" sizes="32px" decorative />
+                              <div>
+                                <span className="text-[13px] font-bold text-white">{enemy.name}</span>
+                                <span className="ml-1.5 text-[11px] text-white/50">· {enemy.role}</span>
+                              </div>
+                            </div>
+                            {isLaneEnemy ? (
+                              <span className="rounded-full bg-rose-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-rose-200 border border-rose-400/50">
+                                ⚔️ En tu línea
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-white/60">
+                                En la partida
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11.5px]">
+                            <div className="rounded-lg bg-rose-500/10 border border-rose-500/25 p-2.5">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                                <span>⚔️</span> Peligro rival
+                              </p>
+                              <p className="mt-1 text-white/90 text-[11.5px] leading-relaxed">
+                                {whyReason}
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/25 p-2.5">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                                <span>🛡️</span> Respuesta táctica
+                              </p>
+                              <p className="mt-1 text-emerald-100 text-[11.5px] leading-relaxed">
+                                {solution}
+                              </p>
+                            </div>
+                          </div>
+
+                          {keyItems.length > 0 && (
+                            <div className="mt-2.5 flex items-center gap-2 border-t border-white/[0.08] pt-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-200/70">Ítems recomendados:</span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {keyItems.map((item) => (
+                                  <span key={item.id} className="inline-flex items-center gap-1.5 rounded-md bg-white/[0.07] px-2 py-0.5 text-[10.5px] text-amber-100 font-medium border border-white/[0.08]">
+                                    <ItemArt item={item} className="h-4 w-4 rounded" sizes="16px" />
+                                    {item.name}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
 

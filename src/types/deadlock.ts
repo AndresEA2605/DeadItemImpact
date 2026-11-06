@@ -33,6 +33,8 @@ export interface HeroCounterMatchup {
   heroId: string;
   advantage: 'Fuerte Contra' | 'Débil Contra' | 'Skill Matchup';
   reason: string;
+  solution?: string;
+  recommendedItemIds?: string[];
 }
 
 export interface HeroBuildStage {
