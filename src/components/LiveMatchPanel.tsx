@@ -419,6 +419,91 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
     };
   }, [laneEnemyHeroes, myHero, playerHeroId, status?.gameMode]);
 
+  const enemyTeamAnalysis = useMemo(() => {
+    if (enemyHeroes.length === 0) return null;
+
+    let spiritCount = 0;
+    let bulletCount = 0;
+    const aerialHeroes: string[] = [];
+    const healingHeroes: string[] = [];
+    const channelerHeroes: string[] = [];
+
+    for (const enemy of enemyHeroes) {
+      if (enemy.attackType.includes('Espíritu')) spiritCount++;
+      if (
+        enemy.attackType.includes('Balas') ||
+        enemy.attackType.includes('Hitscan') ||
+        enemy.attackType.includes('Escopeta')
+      ) bulletCount++;
+
+      if (['vindicta', 'grey-talon', 'lash'].includes(enemy.id)) {
+        aerialHeroes.push(enemy.name);
+      }
+      if (['abrams', 'infernus', 'kelvin', 'shiv'].includes(enemy.id)) {
+        healingHeroes.push(enemy.name);
+      }
+      if (['seven', 'bebop', 'mcginnis'].includes(enemy.id)) {
+        channelerHeroes.push(enemy.name);
+      }
+    }
+
+    const total = spiritCount + bulletCount || 1;
+    const bulletPercent = Math.round((bulletCount / total) * 100);
+    const spiritPercent = 100 - bulletPercent;
+
+    const tacticalNotes: { text: string; icon: string; tone: string }[] = [];
+
+    if (bulletCount >= 4) {
+      tacticalNotes.push({
+        text: 'Predomina daño de Balas: Bullet Armor o Metal Skin recomendados.',
+        icon: '🛡️',
+        tone: 'text-amber-200/90',
+      });
+    } else if (spiritCount >= 4) {
+      tacticalNotes.push({
+        text: 'Predomina daño de Espíritu: Spirit Armor o Superior Stamina esenciales.',
+        icon: '⚡',
+        tone: 'text-purple-200/90',
+      });
+    } else {
+      tacticalNotes.push({
+        text: 'Daño mixto: ajusta armaduras según tu rival de línea.',
+        icon: '⚖️',
+        tone: 'text-sky-200/90',
+      });
+    }
+
+    if (healingHeroes.length >= 2) {
+      tacticalNotes.push({
+        text: `Alta curación (${healingHeroes.join(', ')}): compra Healbane o Decay.`,
+        icon: '🩸',
+        tone: 'text-rose-200/90',
+      });
+    }
+
+    if (aerialHeroes.length > 0) {
+      tacticalNotes.push({
+        text: `Amenaza aérea (${aerialHeroes.join(', ')}): usa Knockdown para derribar.`,
+        icon: '🎯',
+        tone: 'text-emerald-200/90',
+      });
+    }
+
+    if (channelerHeroes.length > 0) {
+      tacticalNotes.push({
+        text: `Canalizadores (${channelerHeroes.join(', ')}): Knockdown para interrumpir ult.`,
+        icon: '⛔',
+        tone: 'text-indigo-200/90',
+      });
+    }
+
+    return {
+      bulletPercent,
+      spiritPercent,
+      tacticalNotes: tacticalNotes.slice(0, 3),
+    };
+  }, [enemyHeroes]);
+
   const openingBuild = useMemo(() => {
     const stage = myHero?.howToPlay.buildGuide[0];
     if (!stage) return null;
@@ -583,7 +668,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
   };
 
   return (
-    <section className={`${active ? 'block' : 'hidden'} screen mx-auto max-w-4xl pb-10 pt-5`} aria-label="Zona de partida">
+    <section className={`${active ? 'block' : 'hidden'} screen mx-auto max-w-5xl pb-10 pt-5`} aria-label="Zona de partida">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
           <p className="mb-1 text-[12px] font-medium uppercase text-white/40">Lectura local · actualiza cada 20 s</p>
@@ -744,6 +829,180 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
             ) : detectedHeroes.length === 0 ? (
               <p className="mt-3 text-[12px] text-white/55">Sin candidatos detectados. Pulsa Añadir rivales.</p>
             ) : null}
+
+            {/* Análisis táctico del equipo rival */}
+            {enemyTeamAnalysis && (
+              <div className="mt-3.5 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span className="flex items-center gap-1.5 uppercase tracking-wider text-white/50 text-[10px]">
+                    <span>📊</span> Perfil de daño enemigo
+                  </span>
+                  <span className="text-[10px] text-white/50 font-mono">
+                    🔫 Balas {enemyTeamAnalysis.bulletPercent}% · ⚡ Espíritu {enemyTeamAnalysis.spiritPercent}%
+                  </span>
+                </div>
+
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08] flex">
+                  <div
+                    className="h-full bg-amber-400 transition-all duration-300"
+                    style={{ width: `${enemyTeamAnalysis.bulletPercent}%` }}
+                    title={`Balas: ${enemyTeamAnalysis.bulletPercent}%`}
+                  />
+                  <div
+                    className="h-full bg-purple-400 transition-all duration-300"
+                    style={{ width: `${enemyTeamAnalysis.spiritPercent}%` }}
+                    title={`Espíritu: ${enemyTeamAnalysis.spiritPercent}%`}
+                  />
+                </div>
+
+                <div className="mt-2.5 space-y-1.5 text-[11px]">
+                  {enemyTeamAnalysis.tacticalNotes.map((note, idx) => (
+                    <p key={idx} className={`flex items-start gap-1.5 ${note.tone} leading-tight`}>
+                      <span className="shrink-0">{note.icon}</span>
+                      <span>{note.text}</span>
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Build rival observada & registro de compras */}
+            <div className="mt-3.5 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Search className="h-3.5 w-3.5 text-white/40" />
+                  <h3 className="text-[12px] font-semibold uppercase tracking-wider text-white/80">Build rival observada</h3>
+                </div>
+                {observedItems.length > 0 && (
+                  <button
+                    onClick={() => setObservedItemIds([])}
+                    className="text-[10px] font-medium text-white/45 hover:text-rose-300 transition"
+                  >
+                    Limpiar ({observedItems.length})
+                  </button>
+                )}
+              </div>
+              <p className="mb-2.5 text-[11px] leading-snug text-white/55">
+                Registra los ítems que veas comprar para recibir counters de respuesta.
+              </p>
+
+              <div className="relative">
+                <input
+                  type="search"
+                  value={itemQuery}
+                  onChange={(event) => setItemQuery(event.target.value)}
+                  placeholder="Buscar compra rival (ej. Bullet Armor, Warp Stone...)"
+                  className="h-10 w-full rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 text-[13px] text-white outline-none placeholder:text-white/40 focus:border-white/20"
+                />
+                {filteredItems.length > 0 && (
+                  <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-white/[0.1] bg-[#17191c] shadow-2xl">
+                    {filteredItems.map((item) => (
+                      <button key={item.id} onClick={() => addObservedItem(item)} className="press flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.06]">
+                        <ItemArt item={item} className="h-7 w-7 rounded-lg bg-white/[0.05]" sizes="28px" />
+                        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/80">{item.name}</span>
+                        <span className="text-[10px] text-white/40">{formatSouls(item.cost)}</span>
+                        <Plus className="h-3.5 w-3.5 text-white/40" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {observedItems.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {observedItems.map((item) => (
+                    <button key={item.id} onClick={() => setObservedItemIds((current) => current.filter((id) => id !== item.id))} className="press inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] py-1 pl-1.5 pr-2 text-[10px] text-white/65 hover:border-rose-400/30" title={`Quitar ${item.name}`}>
+                      <ItemArt item={item} className="h-4 w-4 rounded-full" sizes="16px" />
+                      {item.name}
+                      <X className="h-3 w-3 text-white/35 hover:text-rose-300" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-3">
+                <p className="mb-1.5 text-[11px] font-semibold text-white/60">Categoría de build predominante</p>
+                <div role="group" aria-label="Categoría de la build rival" className="flex gap-0.5 rounded-lg bg-white/[0.04] p-1">
+                  <button
+                    onClick={() => setSelectedBuildCategory('auto')}
+                    aria-pressed={selectedBuildCategory === 'auto'}
+                    className={`press min-w-0 flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold ${selectedBuildCategory === 'auto' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
+                  >
+                    {dominantBuildCategory && selectedBuildCategory === 'auto'
+                      ? BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label.split(' / ')[0]
+                      : 'Auto'}
+                  </button>
+                  {(['weapon', 'vitality', 'spirit'] as const).map((category) => {
+                    const selected = selectedBuildCategory === category;
+                    const label = category === 'weapon' ? 'Arma' : category === 'vitality' ? 'Vida' : 'Espíritu';
+                    return (
+                      <button
+                        key={category}
+                        onClick={() => setSelectedBuildCategory(category)}
+                        aria-pressed={selected}
+                        className={`press flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold ${selected ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
+                      >
+                        {label}
+                        <span className="text-[10px] opacity-60 font-mono">{observedCategoryCounts[category]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[10.5px] leading-tight text-white/50">
+                  {observedItems.length === 0
+                    ? 'Añade compras para detectar la tendencia de daño rival.'
+                    : selectedBuildCategory === 'auto' && dominantBuildCategory
+                      ? `Predomina ${BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label} (${observedCategoryCounts[dominantBuildCategory]}).`
+                      : selectedBuildCategory === 'auto'
+                        ? 'Empate. Elige una categoría manual.'
+                        : `Elegida: ${BUILD_CATEGORY_COUNTERS[selectedBuildCategory].label}.`}
+                </p>
+              </div>
+
+              {categoryCounterItems.length > 0 && activeBuildCategory && (
+                <div className="mt-3 border-t border-white/[0.07] pt-2.5">
+                  <p className="text-[11px] font-semibold text-white/85">
+                    Counters recomendados para {BUILD_CATEGORY_COUNTERS[activeBuildCategory].label.split(' / ')[0]}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {categoryCounterItems.map((item, index) => (
+                      <span key={item.id} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[10.5px] text-white/85">
+                        <ItemArt item={item} className="h-4 w-4 rounded" sizes="16px" />
+                        <span className="font-medium">{item.name}</span>
+                        <span className="text-[9.5px] text-white/45 font-mono">{formatSouls(item.cost)}</span>
+                        {index === 0 && <span className="ml-0.5 rounded bg-emerald-400/20 px-1 py-0.2 text-[8.5px] font-bold text-emerald-300">1°</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {specificBuildSuggestions.length > 0 && (
+                <details className="group mt-2.5 border-t border-white/[0.07] pt-2">
+                  <summary className="flex cursor-pointer list-none items-center justify-between text-[11px] font-medium text-white/60 hover:text-white/80">
+                    <span className="flex items-center gap-1.5">
+                      <Shield className="h-3 w-3 text-emerald-300/70" />
+                      Counters por efecto detectado ({specificBuildSuggestions.length})
+                    </span>
+                    <ChevronDown className="h-3 w-3 transition group-open:rotate-180" />
+                  </summary>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {specificBuildSuggestions.slice(0, 4).map((suggestion) => {
+                      const item = DEADLOCK_ITEMS[suggestion.itemId];
+                      return (
+                        <div key={item.id} className="flex items-center gap-2 rounded-lg bg-white/[0.025] border border-white/[0.05] p-1.5">
+                          <ItemArt item={item} className="h-6 w-6 rounded" sizes="24px" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-semibold text-white/85 truncate">{item.name}</p>
+                            <p className="text-[9.5px] text-white/50 truncate">Responde a {suggestion.signals.join(', ')}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </div>
           </div>
 
             </div>
@@ -886,139 +1145,10 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
             </div>
           </div>
 
-          <div className="mt-6 border-t border-white/[0.08] pt-5">
-            <div className="mb-2 flex items-center gap-2">
-              <Search className="h-3.5 w-3.5 text-white/40" />
-              <h2 className="text-[14px] font-semibold text-white/85">Build rival</h2>
-            </div>
-            <p className="mb-3 text-[12px] leading-relaxed text-white/55">
-              Añade los ítems que veas comprar para recibir counters.
-            </p>
-            <div className="relative">
-              <input
-                type="search"
-                value={itemQuery}
-                onChange={(event) => setItemQuery(event.target.value)}
-                placeholder="Buscar compra rival"
-                className="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 text-[14px] text-white outline-none placeholder:text-white/40 focus:border-white/20"
-              />
-              {filteredItems.length > 0 && (
-                <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-white/[0.1] bg-[#17191c] shadow-2xl">
-                  {filteredItems.map((item) => (
-                    <button key={item.id} onClick={() => addObservedItem(item)} className="press flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.06]">
-                      <ItemArt item={item} className="h-8 w-8 rounded-lg bg-white/[0.05]" sizes="32px" />
-                      <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/80">{item.name}</span>
-                      <span className="text-[10px] text-white/40">{formatSouls(item.cost)}</span>
-                      <Plus className="h-3.5 w-3.5 text-white/40" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {observedItems.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {observedItems.map((item) => (
-                  <button key={item.id} onClick={() => setObservedItemIds((current) => current.filter((id) => id !== item.id))} className="press inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] py-1 pl-1 pr-2 text-[10px] text-white/65" title={`Quitar ${item.name}`}>
-                    <ItemArt item={item} className="h-5 w-5 rounded-full" sizes="20px" />
-                    {item.name}
-                    <X className="h-3 w-3 text-white/35" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-4">
-              <p className="mb-2 text-[12px] font-semibold text-white/65">Categoría de build</p>
-              <div role="group" aria-label="Categoría de la build rival" className="flex gap-0.5 rounded-xl bg-white/[0.045] p-1">
-                <button
-                  onClick={() => setSelectedBuildCategory('auto')}
-                  aria-pressed={selectedBuildCategory === 'auto'}
-                  className={`press min-w-0 flex-1 rounded-lg px-1.5 py-2.5 text-[12px] font-semibold ${selectedBuildCategory === 'auto' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
-                >
-                  {dominantBuildCategory && selectedBuildCategory === 'auto'
-                    ? BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label.split(' / ')[0]
-                    : 'Auto'}
-                </button>
-                {(['weapon', 'vitality', 'spirit'] as const).map((category) => {
-                  const selected = selectedBuildCategory === category;
-                  const label = category === 'weapon' ? 'Arma' : category === 'vitality' ? 'Vida' : 'Espíritu';
-                  return (
-                    <button
-                      key={category}
-                      onClick={() => setSelectedBuildCategory(category)}
-                      aria-pressed={selected}
-                      className={`press flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2.5 text-[12px] font-semibold ${selected ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
-                    >
-                      {label}
-                      <span className="text-[11px] opacity-60">{observedCategoryCounts[category]}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/55">
-                {observedItems.length === 0
-                  ? 'Añade compras para detectar la tendencia.'
-                  : selectedBuildCategory === 'auto' && dominantBuildCategory
-                    ? `Predomina ${BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label} (${observedCategoryCounts[dominantBuildCategory]}).`
-                    : selectedBuildCategory === 'auto'
-                      ? 'Empate. Elige una categoría.'
-                      : `Elegida: ${BUILD_CATEGORY_COUNTERS[selectedBuildCategory].label}.`}
-              </p>
-            </div>
-          </div>
-
-          {categoryCounterItems.length > 0 && activeBuildCategory && (
-            <div className="mt-6 border-t border-white/[0.08] pt-5">
-              <h2 className="text-[14px] font-semibold text-white/85">
-                {myHero ? `Qué armar con ${myHero.name}` : 'Counters para la build observada'}
-              </h2>
-              <p className="mt-1 text-[12px] text-white/55">
-                {BUILD_CATEGORY_COUNTERS[activeBuildCategory].label}: {BUILD_CATEGORY_COUNTERS[activeBuildCategory].reason}
-              </p>
-              <div className="scrollbar-none mt-3 flex gap-4 overflow-x-auto pb-2">
-                {categoryCounterItems.map((item, index) => (
-                  <div key={item.id} className="flex w-[112px] shrink-0 flex-col items-center text-center">
-                    <span className={`relative h-12 w-12 ${index === 0 ? 'scale-110' : ''}`}>
-                      <ItemArt item={item} className="h-full w-full" sizes="48px" />
-                    </span>
-                    <span className="mt-2 line-clamp-2 min-h-8 text-[12px] font-semibold leading-tight text-white/85">{item.name}</span>
-                    <span className="mt-1 font-mono text-[11px] text-white/55">{formatSouls(item.cost)} almas</span>
-                    {index === 0 && <span className="mt-1 text-[11px] font-medium text-emerald-200/90">Primero</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {specificBuildSuggestions.length > 0 && (
-            <details className="group mt-4 border-t border-white/[0.08] pt-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-[12px] font-medium text-white/70">
-                <span className="flex items-center gap-2">
-                  <Shield className="h-3.5 w-3.5 text-emerald-300/70" />
-                  Counters por efecto detectado · {specificBuildSuggestions.length}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
-              </summary>
-              <div className="mt-3 flex flex-col gap-2">
-                {specificBuildSuggestions.slice(0, 5).map((suggestion) => {
-                  const item = DEADLOCK_ITEMS[suggestion.itemId];
-                  return (
-                    <CompactStoreItem
-                      key={item.id}
-                      item={item}
-                      priority="Situacional"
-                      reason={`Responde a ${suggestion.signals.join(', ')} (${suggestion.observedFrom.join(', ')}).`}
-                    />
-                  );
-                })}
-              </div>
-            </details>
-          )}
-
           {enemyHeroes.length > 0 && (
-            <div className="mt-5 border-t border-white/[0.08] pt-4">
+            <div className="mt-6 border-t border-white/[0.08] pt-5">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-[14px] font-semibold text-white/85">Counters para Rivales</h2>
+                <h2 className="text-[14px] font-semibold text-white/85">Counters recomendados para la partida</h2>
                 <span className="text-[11px] text-amber-200/80">{laneEnemyHeroes.length > 0 ? 'Línea primero' : `${enemyHeroes.length} héroes`}</span>
               </div>
 
