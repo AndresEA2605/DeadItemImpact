@@ -110,21 +110,44 @@ const BUILD_COUNTERS: { signal: string; pattern: RegExp; itemIds: string[] }[] =
   { signal: 'daño espiritual', pattern: /daño espiritual|poder espiritual/, itemIds: ['spirit-resilience', 'divine-barrier'] },
 ];
 
-const BUILD_CATEGORY_COUNTERS: Record<ItemCategory, { label: string; itemIds: string[]; reason: string }> = {
+type BuildCategoryType = ItemCategory | 'weapon-spirit' | 'spirit-vitality' | 'weapon-vitality';
+
+const BUILD_CATEGORY_COUNTERS: Record<BuildCategoryType, { label: string; shortLabel: string; itemIds: string[]; reason: string }> = {
   weapon: {
-    label: 'Arma / Fuerza',
+    label: 'Arma / Disparos',
+    shortLabel: 'Arma',
     itemIds: ['return-fire', 'metal-skin', 'bullet-resilience'],
-    reason: 'Reduce daño de armas.',
-  },
-  vitality: {
-    label: 'Vida / Vitalidad',
-    itemIds: ['healbane', 'toxic-bullets', 'decay'],
-    reason: 'Corta curación y castiga salud alta.',
+    reason: 'Mitiga daño continuo de armas y proyectiles.',
   },
   spirit: {
-    label: 'Espíritu',
+    label: 'Espíritu / Magia',
+    shortLabel: 'Espíritu',
     itemIds: ['spirit-resilience', 'debuff-reducer', 'divine-barrier'],
-    reason: 'Mitiga daño espiritual.',
+    reason: 'Absorbe ráfagas espirituales y reduce estados alterados.',
+  },
+  vitality: {
+    label: 'Vida / Regeneración',
+    shortLabel: 'Vida',
+    itemIds: ['healbane', 'toxic-bullets', 'decay'],
+    reason: 'Corta curación y drena barras altas de vida.',
+  },
+  'weapon-spirit': {
+    label: 'Arma + Espíritu (Híbrido)',
+    shortLabel: 'Arma + Espíritu',
+    itemIds: ['metal-skin', 'spirit-resilience', 'return-fire', 'divine-barrier'],
+    reason: 'Protección mixta: armadura ante balas y escudos antimagia.',
+  },
+  'spirit-vitality': {
+    label: 'Espíritu + Vida (Tanque Mágico)',
+    shortLabel: 'Espíritu + Vida',
+    itemIds: ['healbane', 'decay', 'spirit-resilience', 'curse'],
+    reason: 'Corta regeneración y mitiga daño mágico continuo.',
+  },
+  'weapon-vitality': {
+    label: 'Arma + Vida (DPS Tanque)',
+    shortLabel: 'Arma + Vida',
+    itemIds: ['return-fire', 'toxic-bullets', 'decay', 'metal-skin'],
+    reason: 'Refleja disparos continuos y castiga tanques a quemarropa.',
   },
 };
 
@@ -177,7 +200,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
   const [rivalContextMenu, setRivalContextMenu] = useState<RivalContextMenu | null>(null);
   const [itemQuery, setItemQuery] = useState('');
   const [observedItemIds, setObservedItemIds] = useState<string[]>([]);
-  const [selectedBuildCategory, setSelectedBuildCategory] = useState<ItemCategory | 'auto'>('auto');
+  const [selectedBuildCategory, setSelectedBuildCategory] = useState<BuildCategoryType | 'auto'>('auto');
 
   useEffect(() => {
     playerHeroIdRef.current = playerHeroId;
@@ -198,7 +221,10 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
     let inFlight = false;
     let pendingController: AbortController | null = null;
 
-    if (hostedApp && !localBridgeConnected) return;
+    if (hostedApp) {
+      setLoading(false);
+      return;
+    }
 
     const poll = async () => {
       if (inFlight) return;
@@ -522,12 +548,26 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
       observedItems.forEach((item) => { counts[item.category] += 1; });
       return counts;
     }, [observedItems]);
-    const dominantBuildCategory = useMemo(() => {
-      const highest = Math.max(...Object.values(observedCategoryCounts));
-      if (highest === 0) return null;
-      const leaders = (Object.keys(observedCategoryCounts) as ItemCategory[])
-        .filter((category) => observedCategoryCounts[category] === highest);
-      return leaders.length === 1 ? leaders[0] : null;
+    const dominantBuildCategory = useMemo<BuildCategoryType | null>(() => {
+      const { weapon, vitality, spirit } = observedCategoryCounts;
+      const total = weapon + vitality + spirit;
+      if (total === 0) return null;
+
+      // Si hay dos categorías principales con ítems activos, clasificar como build mixta
+      if (weapon >= 1 && spirit >= 1 && Math.abs(weapon - spirit) <= 1) {
+        return 'weapon-spirit';
+      }
+      if (spirit >= 1 && vitality >= 1 && Math.abs(spirit - vitality) <= 1) {
+        return 'spirit-vitality';
+      }
+      if (weapon >= 1 && vitality >= 1 && Math.abs(weapon - vitality) <= 1) {
+        return 'weapon-vitality';
+      }
+
+      // De lo contrario, categoría dominante individual
+      if (weapon >= vitality && weapon >= spirit) return 'weapon';
+      if (vitality >= weapon && vitality >= spirit) return 'vitality';
+      return 'spirit';
     }, [observedCategoryCounts]);
     const activeBuildCategory = selectedBuildCategory === 'auto' ? dominantBuildCategory : selectedBuildCategory;
     const categoryCounterItems = useMemo(
@@ -581,17 +621,17 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
       .filter((item) => !observedItemIds.includes(item.id) && item.name.toLocaleLowerCase().includes(query))
       .slice(0, 5);
   }, [itemQuery, observedItemIds]);
-  const modeTitle = status?.gameMode === 'practice'
-    ? 'Zona de práctica'
-    : status?.gameMode === 'lobby'
-      ? 'En sala'
-      : status?.gameMode === 'match'
-        ? 'Partida en curso'
-        : hostedApp && !localBridgeConnected
-          ? 'Conexión local pendiente'
+  const modeTitle = hostedApp
+    ? 'Modo Asistente Web'
+    : status?.gameMode === 'practice'
+      ? 'Zona de práctica'
+      : status?.gameMode === 'lobby'
+        ? 'En sala'
+        : status?.gameMode === 'match'
+          ? 'Partida en curso'
           : status?.isRunning
-          ? 'Deadlock abierto · modo sin confirmar'
-          : 'Deadlock no detectado';
+            ? 'Deadlock abierto · modo sin confirmar'
+            : 'Deadlock no detectado';
   const mapLabel = status?.mapName ? getMapLabel(status.mapName) : null;
   const showMapLabel = Boolean(mapLabel && mapLabel.toLocaleLowerCase() !== modeTitle.toLocaleLowerCase());
 
@@ -671,19 +711,12 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
     <section className={`${active ? 'block' : 'hidden'} screen mx-auto max-w-5xl pb-10 pt-5`} aria-label="Zona de partida">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <p className="mb-1 text-[12px] font-medium uppercase text-white/40">Lectura local · actualiza cada 20 s</p>
+          <p className="mb-1 text-[12px] font-medium uppercase text-white/40">
+            {hostedApp ? 'Asistente de partida · Versión Web' : 'Lectura local · actualiza cada 20 s'}
+          </p>
           <h1 className="text-2xl font-semibold text-white">Zona de partida</h1>
         </div>
-        {hostedApp && !localBridgeConnected ? (
-          <button
-            onClick={() => void connectLocalBridge()}
-            disabled={connectingLocalBridge}
-            className="press inline-flex min-h-10 items-center gap-2 rounded-full bg-amber-300 px-4 text-[12px] font-semibold text-neutral-950 hover:bg-amber-200 disabled:opacity-60"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${connectingLocalBridge ? 'animate-spin' : ''}`} />
-            {connectingLocalBridge ? 'Conectando…' : 'Conectar este PC'}
-          </button>
-        ) : (
+        {!hostedApp && (
           <button
             onClick={() => setRefreshToken((token) => token + 1)}
             disabled={refreshing || loading}
@@ -696,13 +729,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
         )}
       </div>
 
-      {hostedApp && !localBridgeConnected && (
-        <div className="mb-4 rounded-2xl border border-amber-200/15 bg-amber-200/[0.045] p-3.5 text-[12px] leading-relaxed text-white/65">
-          La web necesita permiso para consultar Deadlock en tu PC. Deja abierto el servidor local del proyecto y pulsa <span className="font-semibold text-white/85">Conectar este PC</span>.
-        </div>
-      )}
-
-      {loading && !status && !(hostedApp && !localBridgeConnected) ? (
+      {!hostedApp && loading && !status ? (
         <div className="animate-pulse space-y-3" aria-label="Cargando estado del juego">
           <div className="h-20 rounded-2xl bg-white/[0.06]" />
           <div className="h-36 rounded-2xl bg-white/[0.04]" />
@@ -710,7 +737,7 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
         </div>
       ) : (
         <>
-          {statusError && (
+          {!hostedApp && statusError && (
             <p role="status" className="mt-3 flex items-center gap-2 text-[12px] text-amber-100/85">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
               {statusError}
@@ -729,17 +756,17 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
                   {autoSelected && <span className="text-[11px] font-medium text-amber-200/90">Auto · confirma</span>}
                 </h2>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-white/60">
-                  <span className={`inline-flex items-center gap-1.5 font-medium ${status?.gameMode === 'match' ? 'text-emerald-200' : status?.gameMode === 'practice' ? 'text-sky-200' : status?.gameMode === 'lobby' ? 'text-amber-200' : 'text-white/60'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${status?.gameMode === 'match' ? 'bg-emerald-400 soft-pulse' : status?.gameMode === 'practice' ? 'bg-sky-300' : status?.gameMode === 'lobby' ? 'bg-amber-300' : 'bg-white/30'}`} />
+                  <span className={`inline-flex items-center gap-1.5 font-medium ${hostedApp ? 'text-sky-300' : status?.gameMode === 'match' ? 'text-emerald-200' : status?.gameMode === 'practice' ? 'text-sky-200' : status?.gameMode === 'lobby' ? 'text-amber-200' : 'text-white/60'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${hostedApp ? 'bg-sky-400' : status?.gameMode === 'match' ? 'bg-emerald-400 soft-pulse' : status?.gameMode === 'practice' ? 'bg-sky-300' : status?.gameMode === 'lobby' ? 'bg-amber-300' : 'bg-white/30'}`} />
                     {modeTitle}
                   </span>
-                  {showMapLabel && mapLabel && (
+                  {!hostedApp && showMapLabel && mapLabel && (
                     <span className="inline-flex items-center gap-1 text-white/50">
                       <MapPin className="h-3 w-3" />
                       {mapLabel}
                     </span>
                   )}
-                  {status?.isRunning && !status.logFresh && (
+                  {!hostedApp && status?.isRunning && !status.logFresh && (
                     <span className="text-amber-200/80" title="Agrega -condebug en las opciones de lanzamiento de Deadlock y reinicia el juego.">
                       Sin registro en vivo · activa -condebug en Steam
                     </span>
@@ -921,48 +948,75 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
               )}
 
               <div className="mt-3">
-                <p className="mb-1.5 text-[11px] font-semibold text-white/60">Categoría de build predominante</p>
-                <div role="group" aria-label="Categoría de la build rival" className="flex gap-0.5 rounded-lg bg-white/[0.04] p-1">
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-[11px] font-semibold text-white/60">Categoría o tendencia de build rival</p>
+                  <span className="text-[9.5px] text-white/40">Simple o Mixta</span>
+                </div>
+
+                {/* Fila 1: Auto y categorías individuales */}
+                <div role="group" aria-label="Categorías individuales" className="flex gap-1 rounded-lg bg-white/[0.04] p-1">
                   <button
                     onClick={() => setSelectedBuildCategory('auto')}
                     aria-pressed={selectedBuildCategory === 'auto'}
-                    className={`press min-w-0 flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold ${selectedBuildCategory === 'auto' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
+                    className={`press min-w-0 flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition ${selectedBuildCategory === 'auto' ? 'bg-amber-400 text-neutral-950 font-bold' : 'text-white/60 hover:text-white/90'}`}
                   >
-                    {dominantBuildCategory && selectedBuildCategory === 'auto'
-                      ? BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label.split(' / ')[0]
-                      : 'Auto'}
+                    Auto {dominantBuildCategory && `(${BUILD_CATEGORY_COUNTERS[dominantBuildCategory].shortLabel})`}
                   </button>
-                  {(['weapon', 'vitality', 'spirit'] as const).map((category) => {
+                  {(['weapon', 'spirit', 'vitality'] as const).map((category) => {
                     const selected = selectedBuildCategory === category;
-                    const label = category === 'weapon' ? 'Arma' : category === 'vitality' ? 'Vida' : 'Espíritu';
+                    const meta = BUILD_CATEGORY_COUNTERS[category];
+                    const icon = category === 'weapon' ? '🔫' : category === 'spirit' ? '⚡' : '🩸';
                     return (
                       <button
                         key={category}
                         onClick={() => setSelectedBuildCategory(category)}
                         aria-pressed={selected}
-                        className={`press flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold ${selected ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white/80'}`}
+                        className={`press flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition ${selected ? 'bg-white/[0.15] text-white' : 'text-white/55 hover:text-white/80'}`}
                       >
-                        {label}
+                        <span className="text-[10px]">{icon}</span>
+                        {meta.shortLabel}
                         <span className="text-[10px] opacity-60 font-mono">{observedCategoryCounts[category]}</span>
                       </button>
                     );
                   })}
                 </div>
+
+                {/* Fila 2: Categorías Mixtas e Híbridas */}
+                <div role="group" aria-label="Builds mixtas" className="mt-1 flex gap-1 rounded-lg bg-white/[0.02] p-1">
+                  {(['weapon-spirit', 'spirit-vitality', 'weapon-vitality'] as const).map((mixedCat) => {
+                    const selected = selectedBuildCategory === mixedCat;
+                    const meta = BUILD_CATEGORY_COUNTERS[mixedCat];
+                    return (
+                      <button
+                        key={mixedCat}
+                        onClick={() => setSelectedBuildCategory(mixedCat)}
+                        aria-pressed={selected}
+                        className={`press flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition border ${selected ? 'bg-amber-400/15 border-amber-400/40 text-amber-200' : 'border-white/[0.05] text-white/50 hover:text-white/75'}`}
+                      >
+                        {meta.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <p className="mt-1.5 text-[10.5px] leading-tight text-white/50">
                   {observedItems.length === 0
-                    ? 'Añade compras para detectar la tendencia de daño rival.'
+                    ? 'Añade compras o pulsa una categoría mixta si el rival combina daño y defensa.'
                     : selectedBuildCategory === 'auto' && dominantBuildCategory
-                      ? `Predomina ${BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label} (${observedCategoryCounts[dominantBuildCategory]}).`
+                      ? `Detectado: ${BUILD_CATEGORY_COUNTERS[dominantBuildCategory].label}.`
                       : selectedBuildCategory === 'auto'
-                        ? 'Empate. Elige una categoría manual.'
-                        : `Elegida: ${BUILD_CATEGORY_COUNTERS[selectedBuildCategory].label}.`}
+                        ? 'Empate de ítems. Elige una categoría manual o mixta.'
+                        : `Seleccionada: ${BUILD_CATEGORY_COUNTERS[selectedBuildCategory].label}.`}
                 </p>
               </div>
 
               {categoryCounterItems.length > 0 && activeBuildCategory && (
                 <div className="mt-3 border-t border-white/[0.07] pt-2.5">
                   <p className="text-[11px] font-semibold text-white/85">
-                    Counters recomendados para {BUILD_CATEGORY_COUNTERS[activeBuildCategory].label.split(' / ')[0]}
+                    Counters recomendados para {BUILD_CATEGORY_COUNTERS[activeBuildCategory].label}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-white/50">
+                    {BUILD_CATEGORY_COUNTERS[activeBuildCategory].reason}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {categoryCounterItems.map((item, index) => (
@@ -1003,9 +1057,66 @@ export function LiveMatchPanel({ active, playerHeroId, onMatchDetected, onPlayer
                 </details>
               )}
             </div>
-          </div>
 
+            {/* Prioridad de Habilidades (Skill Priority) del héroe del jugador */}
+            {myHero?.howToPlay?.skillPriority && myHero.howToPlay.skillPriority.length > 0 && (
+              <div className="mt-3.5 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+                <div className="flex items-center justify-between text-white/80">
+                  <span className="flex items-center gap-1.5 uppercase tracking-wider text-white/50 text-[10px] font-semibold">
+                    <span>⭐</span> Orden de Habilidades · {myHero.name}
+                  </span>
+                  <span className="text-[10px] text-amber-200/80 font-medium">Recomendado</span>
+                </div>
+                <div className="mt-2.5 space-y-1.5">
+                  {myHero.howToPlay.skillPriority.map((step, idx) => (
+                    <div key={idx} className="flex items-start gap-2 rounded-lg bg-white/[0.025] px-2.5 py-1.5 text-[11px] border border-white/[0.04]">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/[0.08] font-mono text-[10px] font-bold text-amber-300 mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <span className="text-white/85 leading-tight">{step}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Temporizadores y Objetivos del Mapa (Macro de Deadlock) */}
+            <div className="mt-3.5 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+              <div className="flex items-center justify-between text-white/80">
+                <span className="flex items-center gap-1.5 uppercase tracking-wider text-white/50 text-[10px] font-semibold">
+                  <span>⏱️</span> Tiempos clave y Objetivos del mapa
+                </span>
+                <span className="text-[10px] text-sky-200/80 font-medium">Deadlock Macro</span>
+              </div>
+              <div className="mt-2.5 grid grid-cols-2 gap-2 text-[10.5px]">
+                <div className="rounded-lg bg-white/[0.025] border border-white/[0.05] p-2">
+                  <div className="flex items-center gap-1 font-bold text-amber-300">
+                    <span>⚡</span> Min 3:00 · Cajas & T1
+                  </div>
+                  <p className="mt-0.5 text-white/60 leading-tight">Campamentos neutrales menores y orbes en callejones.</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.025] border border-white/[0.05] p-2">
+                  <div className="flex items-center gap-1 font-bold text-purple-300">
+                    <span>💎</span> Min 8:00 · Runas
+                  </div>
+                  <p className="mt-0.5 text-white/60 leading-tight">Runas de río (Daño, Movespeed, Cooldown y Oro).</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.025] border border-white/[0.05] p-2">
+                  <div className="flex items-center gap-1 font-bold text-emerald-300">
+                    <span>📦</span> Min 10:00 · Urna
+                  </div>
+                  <p className="mt-0.5 text-white/60 leading-tight">Aparición de Urna (+25% almas a tu equipo al entregarla).</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.025] border border-white/[0.05] p-2">
+                  <div className="flex items-center gap-1 font-bold text-rose-300">
+                    <span>☠️</span> Min 20:00 · Mid Boss
+                  </div>
+                  <p className="mt-0.5 text-white/60 leading-tight">Rejuvenator, caída de gemas y buff global de minions.</p>
+                </div>
+              </div>
             </div>
+          </div>
+        </div>
 
             <div className="min-w-0 border-t border-white/[0.08] pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
               <div className="flex items-center justify-between gap-3">
